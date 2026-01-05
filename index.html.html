@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Arc NFT Market</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+</head>
+
+<body class="bg-slate-900 text-white p-10">
+
+<button onclick="connectWallet()" id="connectBtn"
+ class="bg-blue-600 px-6 py-3 rounded font-bold mb-10">
+ Connect Wallet
+</button>
+
+<!-- CREATE NFT -->
+<div class="bg-slate-800 p-6 rounded-xl max-w-md mb-12">
+  <h2 class="text-xl font-bold mb-4">Create NFT</h2>
+
+  <input id="name" placeholder="Name"
+   class="w-full mb-3 p-2 bg-slate-700 rounded">
+
+  <textarea id="description" placeholder="Description"
+   class="w-full mb-3 p-2 bg-slate-700 rounded"></textarea>
+
+  <input type="file" id="image"
+   class="w-full mb-4">
+
+  <button onclick="createNFT()"
+   class="bg-green-600 w-full py-2 rounded font-bold">
+   Mint NFT
+  </button>
+</div>
+
+<!-- MARKET -->
+<div id="items" class="grid md:grid-cols-3 gap-8"></div>
+
+<script>
+const MARKETPLACE_ADDRESS = "0x8e6fD58c5FB124BB884BF2888a3D826Fdb302C1F";
+const NFT_STORAGE_KEY = "8956e72c.e80555b8382c4cb5930f71d5c3939444";
+
+const ABI = [
+  "function createToken(string tokenURI) payable returns (uint256)",
+  "function fetchMarketItems() view returns (tuple(uint256 tokenId,address seller,address owner,uint256 price,bool sold)[])",
+  "function createMarketSale(uint256 tokenId) payable",
+  "function tokenURI(uint256 tokenId) view returns (string)"
+];
+
+let provider, signer, contract;
+
+async function connectWallet() {
+  provider = new ethers.providers.Web3Provider(window.ethereum);
+  await provider.send("eth_requestAccounts", []);
+  signer = provider.getSigner();
+  contract = new ethers.Contract(MARKETPLACE_ADDRESS, ABI, signer);
+
+  const addr = await signer.getAddress();
+  connectBtn.innerText = addr.slice(0,6)+"..."+addr.slice(-4);
+
+  loadMarket();
+}
+
+async function createNFT() {
+  const file = document.getElementById("image").files[0];
+  if (!file) return alert("Image required");
+
+  // 1️⃣ Upload image to IPFS
+  const imgRes = await fetch("https://api.nft.storage/upload", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${NFT_STORAGE_KEY}`
+    },
+    body: file
+  });
+  const imgData = await imgRes.json();
+  const imageURL = `https://ipfs.io/ipfs/${imgData.value.cid}`;
+
+  // 2️⃣ Create metadata
+  const metadata = {
+    name: name.value,
+    description: description.value,
+    image: imageURL
+  };
+
+  const metaRes = await fetch("https://api.nft.storage/upload", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${NFT_STORAGE_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(metadata)
+  });
+
+  const metaData = await metaRes.json();
+  const tokenURI = `https://ipfs.io/ipfs/${metaData.value.cid}`;
+
+  // 3️⃣ Mint
+  const tx = await contract.createToken(tokenURI, {
+    value: ethers.utils.parseEther("0.025") // listing fee
+  });
+  await tx.wait();
+
+  alert("NFT created!");
+  loadMarket();
+}
+
+async function loadMarket() {
+  const items = await contract.fetchMarketItems();
+  itemsContainer.innerHTML = "";
+
+  for (const item of items) {
+    const uri = await contract.tokenURI(item.tokenId);
+    const meta = await fetch(uri).then(r=>r.json());
+    const price = ethers.utils.formatEther(item.price);
+
+    itemsContainer.innerHTML += `
+      <div class="bg-slate-800 rounded-xl overflow-hidden">
+        <img src="${meta.image}" class="h-56 w-full object-cover">
+        <div class="p-4">
+          <h2 class="font-bold">${meta.name}</h2>
+          <p class="text-slate-400">${price} ARC</p>
+          <button
+            onclick="buy(${item.tokenId}, '${item.price}')"
+            class="bg-blue-600 w-full mt-3 py-2 rounded">
+            Buy
+          </button>
+        </div>
+      </div>
+    `;
+  }
+}
+
+async function buy(id, price) {
+  const tx = await contract.createMarketSale(id, { value: price });
+  await tx.wait();
+  alert("Purchased");
+  loadMarket();
+}
+</script>
+
+</body>
+</html>
